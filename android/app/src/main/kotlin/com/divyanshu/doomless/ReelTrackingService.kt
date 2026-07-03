@@ -1,9 +1,8 @@
-package com.example.distract
+package com.divyanshu.doomless
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.Drawable
@@ -18,6 +17,10 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import org.json.JSONObject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class ReelTrackingService : AccessibilityService() {
 
@@ -40,15 +43,46 @@ class ReelTrackingService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        checkMidnightReset() // Check immediately on startup
         val prefs = getSharedPreferences("ReelPrefs", Context.MODE_PRIVATE)
         instaCount = prefs.getInt("insta_count", 0)
         youtubeCount = prefs.getInt("youtube_count", 0)
     }
 
+    private fun checkMidnightReset() {
+        val prefs = getSharedPreferences("ReelPrefs", Context.MODE_PRIVATE)
+        val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+        val savedDate = prefs.getString("last_tracked_date", currentDate)
+
+        // If the date has changed, we need to reset and save history
+        if (currentDate != savedDate) {
+            val historyStr = prefs.getString("weekly_history", "{}")
+            val historyObj = JSONObject(historyStr)
+            
+            // Save the final count of the previous day
+            val totalYesterday = instaCount + youtubeCount
+            historyObj.put(savedDate, totalYesterday)
+
+            // Save back to prefs and reset counts
+            prefs.edit()
+                .putString("weekly_history", historyObj.toString())
+                .putString("last_tracked_date", currentDate)
+                .putInt("insta_count", 0)
+                .putInt("youtube_count", 0)
+                .apply()
+
+            instaCount = 0
+            youtubeCount = 0
+            saveAndBroadcastCount() // Force update to Flutter UI
+        }
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        checkMidnightReset() // Ensure we rotate days if crossing midnight while scrolling
+
         val eventPackage = event.packageName?.toString() ?: return
 
-        if (eventPackage == "com.example.distract") return
+        if (eventPackage == "com.divyanshu.doomless" || eventPackage == "com.example.distract") return
 
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val actualActivePackage = rootInActiveWindow?.packageName?.toString() ?: eventPackage
@@ -117,7 +151,6 @@ class ReelTrackingService : AccessibilityService() {
         }
     }
 
-    // UPDATED: Now strictly checks if the container is actually visible to the user!
     private fun checkIsReelsLayout(node: AccessibilityNodeInfo, pkg: String): Boolean {
         if (pkg == "com.instagram.android") {
             val reelsNodes = node.findAccessibilityNodeInfosByViewId("com.instagram.android:id/clips_video_container")
@@ -126,7 +159,6 @@ class ReelTrackingService : AccessibilityService() {
             val r1 = node.findAccessibilityNodeInfosByViewId("com.google.android.youtube:id/reel_recycler")
             val r2 = node.findAccessibilityNodeInfosByViewId("com.google.android.youtube:id/reel_viewer_page")
             val r3 = node.findAccessibilityNodeInfosByViewId("com.google.android.youtube:id/shorts_player_view")
-
             return r1.any { it.isVisibleToUser } || r2.any { it.isVisibleToUser } || r3.any { it.isVisibleToUser }
         }
         return false
@@ -158,7 +190,6 @@ class ReelTrackingService : AccessibilityService() {
                 else R.drawable.ic_owl_youtube
             )
         }
-        // Added ONCE!
         container.addView(icon)
         birdIconView = icon
 
@@ -212,9 +243,13 @@ class ReelTrackingService : AccessibilityService() {
     }
 
     private fun saveAndBroadcastCount() {
+        // Also update last_tracked_date just in case the app was freshly installed
+        val currentDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
         getSharedPreferences("ReelPrefs", Context.MODE_PRIVATE).edit()
             .putInt("insta_count", instaCount)
-            .putInt("youtube_count", youtubeCount).apply()
+            .putInt("youtube_count", youtubeCount)
+            .putString("last_tracked_date", currentDate)
+            .apply()
 
         val intent = Intent("com.example.distract.UPDATE_COUNT")
         intent.putExtra("insta", instaCount)

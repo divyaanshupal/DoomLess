@@ -1,4 +1,4 @@
-package com.example.distract
+package com.divyanshu.doomless
 
 import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager

@@ -1,4 +1,4 @@
-package com.example.distract
+package com.divyanshu.doomless
 
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo

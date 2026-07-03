@@ -1,4 +1,4 @@
-package com.example.distract
+package com.divyanshu.doomless
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -49,6 +49,12 @@ class MainActivity: FlutterActivity() {
                     val prefs = getSharedPreferences("ReelPrefs", Context.MODE_PRIVATE)
                     val data = mapOf("insta" to prefs.getInt("insta_count", 0), "yt" to prefs.getInt("youtube_count", 0))
                     result.success(data)
+                }
+
+                "getScrollHistory" -> {
+                    val prefs = getSharedPreferences("ReelPrefs", Context.MODE_PRIVATE)
+                    val historyJson = prefs.getString("weekly_history", "{}")
+                    result.success(historyJson)
                 }
                 else -> result.notImplemented()
             }

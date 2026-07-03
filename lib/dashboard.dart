@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -72,7 +73,10 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isAccessibilityEnabled = false;
   bool _isOverlayEnabled = false;
   int _selectedNav = 0;
-  bool _hasPromptedPermissions = false;
+  bool _isDialogOpen = false;
+
+  Map<String, int> _weeklyHistory = {};
+  int _yesterdayCount = 0;
 
   @override
   void initState() {
@@ -115,20 +119,34 @@ class _DashboardScreenState extends State<DashboardScreen>
     bool overlay = false;
     int insta = 0;
     int yt = 0;
+    Map<String, int> history = {};
+    int yesterdayTotal = 0;
 
     try {
       acc = await _platform.invokeMethod('isAccessibilityEnabled') ?? false;
-    } catch (_) {}
-    try {
       overlay = await _platform.invokeMethod('isOverlayEnabled') ?? false;
-    } catch (_) {}
-    try {
+
       final dynamic data = await _platform.invokeMethod('getInitialCount');
       if (data is Map) {
         insta = (data['insta'] as int?) ?? 0;
         yt = (data['yt'] as int?) ?? 0;
       }
-    } catch (_) {}
+
+      final String? historyJson = await _platform.invokeMethod(
+        'getScrollHistory',
+      );
+      if (historyJson != null) {
+        final decoded = jsonDecode(historyJson) as Map<String, dynamic>;
+        history = decoded.map((key, value) => MapEntry(key, value as int));
+
+        final yesterday = DateTime.now().subtract(const Duration(days: 1));
+        final yesterdayStr =
+            "${yesterday.year}-${yesterday.month.toString().padLeft(2, '0')}-${yesterday.day.toString().padLeft(2, '0')}";
+        yesterdayTotal = history[yesterdayStr] ?? 0;
+      }
+    } catch (e) {
+      debugPrint("Error fetching data: $e");
+    }
 
     if (mounted) {
       setState(() {
@@ -136,138 +154,150 @@ class _DashboardScreenState extends State<DashboardScreen>
         _isOverlayEnabled = overlay;
         _instaCount = insta;
         _ytCount = yt;
+        _weeklyHistory = history;
+        _yesterdayCount = yesterdayTotal;
       });
 
-      // Show auto-prompt on first open if permissions are missing
-      if (!_hasPromptedPermissions && (!acc || !overlay)) {
-        _hasPromptedPermissions = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _showPermissionOnboardingDialog();
-        });
+      if (!acc || !overlay) {
+        if (!_isDialogOpen) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showPermissionOnboardingDialog();
+          });
+        }
+      } else {
+        if (_isDialogOpen) {
+          Navigator.of(context, rootNavigator: true).pop();
+          _isDialogOpen = false;
+        }
       }
     }
   }
 
   void _showPermissionOnboardingDialog() {
+    _isDialogOpen = true;
     showDialog(
       context: context,
       barrierDismissible: false,
       barrierColor: Colors.black.withOpacity(0.45),
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
-          decoration: BoxDecoration(
-            color: _card,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: _border),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: _surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: _border),
+      builder: (context) => PopScope(
+        canPop: false,
+        child: Dialog(
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+            decoration: BoxDecoration(
+              color: _card,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: _border),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: _surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: _border),
+                  ),
+                  child: Icon(
+                    Icons.shield_outlined,
+                    color: _textPrimary,
+                    size: 24,
+                  ),
                 ),
-                child: Icon(
-                  Icons.shield_outlined,
-                  color: _textPrimary,
-                  size: 24,
+                const SizedBox(height: 18),
+                Text(
+                  'Permissions needed',
+                  style: GoogleFonts.dmSans(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: -0.3,
+                    color: _textPrimary,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Permissions needed',
-                style: GoogleFonts.dmSans(
-                  fontSize: 19,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.3,
-                  color: _textPrimary,
+                const SizedBox(height: 8),
+                Text(
+                  'Doomless requires two permission of Accessibility Service to read screen nodes and overlay permission to display the floating counter . No personal data ever leaves your device',
+                  style: GoogleFonts.dmSans(
+                    fontSize: 13.5,
+                    height: 1.45,
+                    color: _textSecondary,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Mindful Scrolls needs two permissions to track your scrolling in the background.',
-                style: GoogleFonts.dmSans(
-                  fontSize: 13.5,
-                  height: 1.45,
-                  color: _textSecondary,
+                const SizedBox(height: 20),
+                _buildDialogPermissionRow(
+                  icon: Icons.track_changes_rounded,
+                  label: 'Accessibility access',
                 ),
-              ),
-              const SizedBox(height: 20),
-              _buildDialogPermissionRow(
-                icon: Icons.track_changes_rounded,
-                label: 'Accessibility access',
-              ),
-              const SizedBox(height: 10),
-              _buildDialogPermissionRow(
-                icon: Icons.layers_rounded,
-                label: 'Display over other apps',
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextButton(
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                const SizedBox(height: 10),
+                _buildDialogPermissionRow(
+                  icon: Icons.layers_rounded,
+                  label: 'Display over other apps',
+                ),
+                const SizedBox(height: 24),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                      child: Text(
-                        'Not now',
-                        style: GoogleFonts.dmSans(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: _textSecondary,
+                        onPressed: () => SystemNavigator.pop(),
+                        child: Text(
+                          'Not now',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                            color: _textSecondary,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _textPrimary,
-                        foregroundColor: _bg,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _textPrimary,
+                          foregroundColor: _bg,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        if (!_isAccessibilityEnabled) {
-                          _platform.invokeMethod('openAccessibilitySettings');
-                        } else if (!_isOverlayEnabled) {
-                          _platform.invokeMethod('openOverlaySettings');
-                        }
-                      },
-                      child: Text(
-                        'Continue',
-                        style: GoogleFonts.dmSans(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
+                        onPressed: () {
+                          if (!_isAccessibilityEnabled) {
+                            _platform.invokeMethod('openAccessibilitySettings');
+                          } else if (!_isOverlayEnabled) {
+                            _platform.invokeMethod('openOverlaySettings');
+                          }
+                        },
+                        child: Text(
+                          'Continue',
+                          style: GoogleFonts.dmSans(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
-    );
+    ).then((_) {
+      _isDialogOpen = false;
+    });
   }
 
   Widget _buildDialogPermissionRow({
@@ -300,7 +330,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // ── Colors ──────────────────────────────────────────────────────────────
   Color get _bg => themeModeNotifier.value == ThemeMode.dark
       ? const Color(0xFF111111)
       : const Color(0xFFFFFFFF);
@@ -342,58 +371,28 @@ class _DashboardScreenState extends State<DashboardScreen>
           body: SafeArea(
             child: Column(
               children: [
-                _buildHeader(),
                 Expanded(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildCounterCard(),
-                        const SizedBox(height: 16),
-                        _buildMiniStats(),
-                        const SizedBox(height: 28),
-                        _buildSectionLabel('Platform Breakdown'),
-                        const SizedBox(height: 12),
-                        _buildPlatformStatRow(
-                          title: 'Instagram Reels',
-                          icon: Icons.camera_alt_rounded,
-                          count: _instaCount,
-                        ),
-                        const SizedBox(height: 10),
-                        _buildPlatformStatRow(
-                          title: 'YouTube Shorts',
-                          icon: Icons.play_circle_fill_rounded,
-                          count: _ytCount,
-                        ),
-                        const SizedBox(height: 28),
-                        _buildSectionLabel('Permissions'),
-                        const SizedBox(height: 12),
-                        _buildPermissionCard(
-                          title: 'Background tracker',
-                          subtitle: _isAccessibilityEnabled
-                              ? 'Active'
-                              : 'Needs accessibility permission',
-                          icon: Icons.track_changes_rounded,
-                          isEnabled: _isAccessibilityEnabled,
-                          onTap: () => _platform.invokeMethod(
-                            'openAccessibilitySettings',
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        _buildPermissionCard(
-                          title: 'Floating overlay',
-                          subtitle: _isOverlayEnabled
-                              ? 'Active'
-                              : 'Needs display over other apps',
-                          icon: Icons.layers_rounded,
-                          isEnabled: _isOverlayEnabled,
-                          onTap: () =>
-                              _platform.invokeMethod('openOverlaySettings'),
-                        ),
-                      ],
-                    ),
+                  // ==========================================
+                  // TAB SWITCHER WITH ANIMATIONS
+                  // ==========================================
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 300),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder:
+                        (Widget child, Animation<double> animation) {
+                          return FadeTransition(
+                            opacity: animation,
+                            child: ScaleTransition(
+                              scale: Tween<double>(
+                                begin: 0.96,
+                                end: 1.0,
+                              ).animate(animation),
+                              child: child,
+                            ),
+                          );
+                        },
+                    child: _buildCurrentTab(),
                   ),
                 ),
                 _buildBottomNav(),
@@ -402,6 +401,88 @@ class _DashboardScreenState extends State<DashboardScreen>
           ),
         );
       },
+    );
+  }
+
+  // --- Dynamic Tab Logic ---
+  Widget _buildCurrentTab() {
+    if (_selectedNav == 0) {
+      return _buildHomeContent(key: const ValueKey('homeTab'));
+    } else if (_selectedNav == 1) {
+      return StatsScreen(
+        key: const ValueKey('statsTab'),
+        themeNotifier: themeModeNotifier,
+        totalCount: _totalCount,
+        yesterdayCount: _yesterdayCount,
+        weeklyHistory: _weeklyHistory,
+      );
+    } else {
+      return Center(
+        key: const ValueKey('settingsTab'),
+        child: Text(
+          'Settings Coming Soon',
+          style: GoogleFonts.dmSans(color: _textPrimary, fontSize: 16),
+        ),
+      );
+    }
+  }
+
+  // --- Home Tab Content ---
+  Widget _buildHomeContent({Key? key}) {
+    return Column(
+      key: key,
+      children: [
+        _buildHeader(),
+        Expanded(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildCounterCard(),
+                const SizedBox(height: 28),
+                _buildSectionLabel('Platform Breakdown'),
+                const SizedBox(height: 12),
+                _buildPlatformStatRow(
+                  title: 'Instagram Reels',
+                  icon: Icons.camera_alt_rounded,
+                  count: _instaCount,
+                ),
+                const SizedBox(height: 10),
+                _buildPlatformStatRow(
+                  title: 'YouTube Shorts',
+                  icon: Icons.play_circle_fill_rounded,
+                  count: _ytCount,
+                ),
+                const SizedBox(height: 28),
+                _buildSectionLabel('Permissions'),
+                const SizedBox(height: 12),
+                _buildPermissionCard(
+                  title: 'Background tracker',
+                  subtitle: _isAccessibilityEnabled
+                      ? 'Active'
+                      : 'Needs accessibility permission',
+                  icon: Icons.track_changes_rounded,
+                  isEnabled: _isAccessibilityEnabled,
+                  onTap: () =>
+                      _platform.invokeMethod('openAccessibilitySettings'),
+                ),
+                const SizedBox(height: 10),
+                _buildPermissionCard(
+                  title: 'Floating overlay',
+                  subtitle: _isOverlayEnabled
+                      ? 'Active'
+                      : 'Needs display over other apps',
+                  icon: Icons.layers_rounded,
+                  isEnabled: _isOverlayEnabled,
+                  onTap: () => _platform.invokeMethod('openOverlaySettings'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -426,7 +507,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               ),
               const SizedBox(height: 2),
               Text(
-                'Mindful Scrolls',
+                'DoomScrolls',
                 style: GoogleFonts.dmSans(
                   fontSize: 26,
                   fontWeight: FontWeight.w600,
@@ -504,55 +585,6 @@ class _DashboardScreenState extends State<DashboardScreen>
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildMiniStats() {
-    return Row(
-      children: [
-        _buildMiniStatCard('12m', 'Time saved'),
-        const SizedBox(width: 10),
-        _buildMiniStatCard('3', 'Day streak'),
-        const SizedBox(width: 10),
-        _buildMiniStatCard('↑14%', 'vs yesterday'),
-      ],
-    );
-  }
-
-  Widget _buildMiniStatCard(String value, String label) {
-    return Expanded(
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-        decoration: BoxDecoration(
-          color: _surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: _border),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text(
-              value,
-              style: GoogleFonts.dmSans(
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
-                color: _textPrimary,
-                letterSpacing: -0.5,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: GoogleFonts.dmSans(
-                fontSize: 10,
-                color: _textMuted,
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -746,15 +778,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           final selected = _selectedNav == i;
           return GestureDetector(
             onTap: () {
+              // NO MORE NAVIGATOR PUSH! Just updating state to trigger AnimatedSwitcher.
               setState(() => _selectedNav = i);
-              if (i == 1) {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        StatsScreen(themeNotifier: themeModeNotifier),
-                  ),
-                );
-              }
             },
             behavior: HitTestBehavior.opaque,
             child: AnimatedContainer(
