@@ -1,13 +1,33 @@
 import 'package:distract/dashboard.dart';
 import 'package:distract/splash.dart';
+import 'package:distract/accessibility_consent_screen.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
-  runApp( MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  final prefs = await SharedPreferences.getInstance();
+  final bool hasConsented = prefs.getBool('accessibility_consented') ?? false;
+
+  bool isAccessibilityEnabled = false;
+  try {
+    const platform = MethodChannel('com.example.distract/channel');
+    isAccessibilityEnabled = await platform.invokeMethod<bool>('isAccessibilityEnabled') ?? false;
+  } catch (e) {
+    debugPrint('Error checking accessibility status: $e');
+  }
+
+  // We only navigate straight to Dashboard if user consented AND permission is currently active
+  final bool shouldGoToDashboard = hasConsented && isAccessibilityEnabled;
+
+  runApp(MyApp(shouldGoToDashboard: shouldGoToDashboard));
 }
 
 class MyApp extends StatelessWidget {
-  MyApp({super.key});
+  final bool shouldGoToDashboard;
+
+  MyApp({super.key, required this.shouldGoToDashboard});
 
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
 
@@ -25,7 +45,9 @@ class MyApp extends StatelessWidget {
         onDone: () {
           _navigatorKey.currentState?.pushReplacement(
             PageRouteBuilder(
-              pageBuilder: (_, __, ___) => const DashboardScreen(),
+              pageBuilder: (_, __, ___) => shouldGoToDashboard
+                  ? const DashboardScreen()
+                  : const AccessibilityConsentScreen(),
               transitionDuration: const Duration(milliseconds: 300),
               transitionsBuilder: (_, anim, __, child) =>
                   FadeTransition(opacity: anim, child: child),
